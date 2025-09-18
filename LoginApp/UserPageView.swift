@@ -2,6 +2,7 @@ import SwiftUI
 import MapKit
 
 struct UserPageView: View {
+    @StateObject private var orderStore = FirebaseOrderStore()
     @State private var selectedTab: Tab = .home
     @State private var pickupAddress: String = ""
     @State private var dropAddress: String = ""
@@ -73,44 +74,75 @@ struct UserPageView: View {
 
     // MARK: - Orders Tab
     private var ordersTab: some View {
-        VStack {
-            Text("📦 Past Orders")
-                .font(.title2)
-                .padding(.top, 20)
+        NavigationView {
+            VStack {
+                Text("📦 My Orders")
+                    .font(.title2)
+                    .padding(.top, 20)
 
-            let orders = loadOrders()
-            if orders.isEmpty {
-                Text("No past orders yet.")
-                    .foregroundColor(.gray)
-                    .padding()
-            } else {
-                List(orders) { order in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(order.pickup) → \(order.dropoff)")
+                if orderStore.orders.isEmpty {
+                    VStack(spacing: 16) {
+                        Text("No orders yet.")
+                            .foregroundColor(.gray)
                             .font(.headline)
-                        Text("Size: \(order.size), Weight: \(order.weight), Fragile: \(order.fragile ? "Yes" : "No")")
-                            .font(.subheadline)
+                        Text("Create your first order from the Home tab!")
                             .foregroundColor(.secondary)
-                        Text("Cost: $\(String(format: "%.2f", order.cost)) — ETA: \(order.etaMinutes) mins")
-                            .font(.subheadline)
-                            .foregroundColor(.blue)
+                            .multilineTextAlignment(.center)
                     }
-                    .padding(.vertical, 4)
+                    .padding()
+                    Spacer()
+                } else {
+                    List(orderStore.orders) { order in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("\(order.pickup) → \(order.dropoff)")
+                                    .font(.headline)
+                                Spacer()
+                                Text(order.status.displayName)
+                                    .font(.caption)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(order.status.color.opacity(0.2))
+                                    .foregroundColor(order.status.color)
+                                    .cornerRadius(8)
+                            }
+                            
+                            Text("Size: \(order.size), Weight: \(order.weight), Fragile: \(order.fragile ? "Yes" : "No")")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            
+                            Text("Cost: $\(String(format: "%.2f", order.cost)) — ETA: \(order.etaMinutes) mins")
+                                .font(.subheadline)
+                                .foregroundColor(.blue)
+                            
+                            if let instructions = order.instructions, !instructions.isEmpty {
+                                Text("Instructions: \(instructions)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .italic()
+                            }
+                            
+                            if let driverId = order.driverId {
+                                Text("Driver: \(driverId)")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                            }
+                            
+                            if order.deliveryPhotoURL != nil {
+                                Button("View Delivery Photo") {
+                                    // TODO: Show delivery photo
+                                }
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
             }
-
-            // 🔹 Clear Orders Button
-            Button("Clear All Orders") {
-                clearOrders()
-                selectedTab = .pastOrders  // refresh
+            .onAppear {
+                orderStore.loadOrders()
             }
-            .padding()
-            .frame(maxWidth: .infinity)
-            .background(Color.red)
-            .foregroundColor(.white)
-            .cornerRadius(10)
-            .padding(.horizontal)
-            .padding(.bottom, 20)
         }
     }
 
@@ -203,53 +235,38 @@ struct UserPageView: View {
     private func confirmOrder() {
         guard let route = self.route, let cost = deliveryCost else { return }
         let order = Order(
+            userId: token, // Using token as userId for now
             pickup: pickupAddress,
             dropoff: dropAddress,
             size: packageSize,
             weight: packageWeight,
             fragile: fragile,
             speed: deliverySpeed,
-            instructions: instructions,
+            instructions: instructions.isEmpty ? nil : instructions,
             cost: cost,
             distance: route.distance / 1000,
             etaMinutes: Int(route.expectedTravelTime / 60)
         )
-        saveOrder(order)
-        selectedTab = .pastOrders
-
-        // 🔹 Reset fields for new order
-        pickupAddress = ""
-        dropAddress = ""
-        packageSize = "Medium"
-        packageWeight = "< 5kg"
-        fragile = false
-        deliverySpeed = "Standard"
-        instructions = ""
-        self.route = nil       // ✅ explicitly reference the @State var
-        showMap = false
-        deliveryCost = nil
-    }
-
-    private func clearOrders() {
-        UserDefaults.standard.removeObject(forKey: "orders")
-    }
-
-    // MARK: - Save / Load Orders
-    private func saveOrder(_ order: Order) {
-        var orders = loadOrders()
-        orders.append(order)
-        if let data = try? JSONEncoder().encode(orders) {
-            UserDefaults.standard.set(data, forKey: "orders")
+        
+        Task {
+            await orderStore.saveOrder(order)
+            await MainActor.run {
+                selectedTab = .pastOrders
+                // Reset fields for new order
+                pickupAddress = ""
+                dropAddress = ""
+                packageSize = "Medium"
+                packageWeight = "< 5kg"
+                fragile = false
+                deliverySpeed = "Standard"
+                instructions = ""
+                self.route = nil
+                showMap = false
+                deliveryCost = nil
+            }
         }
     }
 
-    private func loadOrders() -> [Order] {
-        if let data = UserDefaults.standard.data(forKey: "orders"),
-           let orders = try? JSONDecoder().decode([Order].self, from: data) {
-            return orders
-        }
-        return []
-    }
 
     // MARK: - Cost Calculation
     private func calculateCost(for route: MKRoute) -> Double {

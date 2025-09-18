@@ -7,14 +7,18 @@
 
 
 import Foundation
+import FirebaseFirestore
 
 struct Profile: Codable {
+    @DocumentID var id: String?
     var fullName: String = ""
     var email: String = ""
     var phone: String = ""
     var homeAddress: String = ""
     var workAddress: String = ""
     var notificationsEnabled: Bool = true
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
 }
 
 final class ProfileStore: ObservableObject {

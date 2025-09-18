@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ProfileView: View {
-    @StateObject private var store = ProfileStore()
+    @StateObject private var store = FirebaseProfileStore()
 
     let token: String
     let initialName: String?

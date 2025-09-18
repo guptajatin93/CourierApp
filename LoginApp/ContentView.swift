@@ -9,25 +9,15 @@ struct BundledUser: Codable {
 }
 
 struct ContentView: View {
-    @StateObject private var auth = AuthStore()
+    @StateObject private var auth = FirebaseAuthStore()
 
     @State private var email: String = ""
     @State private var password: String = ""
-    @State private var isLoggedIn: Bool = false
     @State private var showSignUp: Bool = false
-    @State private var message: String = ""
 
     var body: some View {
-        if isLoggedIn, let u = auth.currentUser {
-                    UserPageView(
-                        token: u.token,
-                        initialName: u.fullName,
-                        initialEmail: u.email
-                    )
-                    .onReceive(NotificationCenter.default.publisher(for: .didSignOut)) { _ in
-                        auth.currentUser = nil
-                        isLoggedIn = false
-                    }
+        if let u = auth.currentUser {
+                    RoleBasedView(auth: auth)
                 }
         else {
             VStack(spacing: 20) {
@@ -49,22 +39,26 @@ struct ContentView: View {
                     .cornerRadius(8)
 
                 Button("Sign In") {
-                    signIn()
+                    Task {
+                        await signIn()
+                    }
                 }
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
                 .padding()
-                .background(Color.blue)
+                .background(auth.isLoading ? Color.gray : Color.blue)
                 .cornerRadius(8)
+                .disabled(auth.isLoading)
 
                 Button("Create Account") {
                     showSignUp = true
                 }
                 .padding(.top, 4)
 
-                if !message.isEmpty {
-                    Text(message)
+                if let errorMessage = auth.errorMessage {
+                    Text(errorMessage)
                         .foregroundColor(.red)
+                        .padding()
                 }
             }
             .padding()
@@ -74,31 +68,8 @@ struct ContentView: View {
         }
     }
 
-    private func signIn() {
-        message = ""
-        let fallback = loadBundledUsersAsAppUsers()
-        if let _ = auth.signIn(email: email, password: password, bundledFallback: fallback) {
-            isLoggedIn = true
-        } else {
-            message = "Invalid credentials"
-        }
-    }
-
-    private func loadBundledUsersAsAppUsers() -> [AppUser] {
-        guard let url = Bundle.main.url(forResource: "users", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let raw = try? JSONDecoder().decode([BundledUser].self, from: data) else {
-            return []
-        }
-        // Map to AppUser with hashed password so sign-in path is uniform
-        return raw.map {
-            let hashed = AuthStore.hash(password: $0.password)
-            return AppUser(fullName: $0.username,
-                           email: $0.email ?? "\($0.username)@example.com",
-                           phone: "",
-                           passwordHash: hashed,
-                           token: $0.token)
-        }
+    private func signIn() async {
+        await auth.signIn(email: email, password: password)
     }
 }
 extension Notification.Name {

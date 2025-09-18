@@ -10,7 +10,7 @@ import SwiftUI
 
 struct SignUpView: View {
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject var auth: AuthStore
+    @ObservedObject var auth: FirebaseAuthStore
 
     @State private var fullName = ""
     @State private var email = ""
@@ -18,7 +18,7 @@ struct SignUpView: View {
     @State private var password = ""
     @State private var confirmPassword = ""
     @State private var agree = false
-    @State private var error: String?
+    @State private var selectedRole: UserRole = .user
 
     var body: some View {
         NavigationStack {
@@ -39,22 +39,33 @@ struct SignUpView: View {
                     SecureField("Password (min 6 chars)", text: $password)
                     SecureField("Confirm password", text: $confirmPassword)
                 }
+                
+                Section("Account Type") {
+                    Picker("Role", selection: $selectedRole) {
+                        ForEach(UserRole.allCases, id: \.self) { role in
+                            Text(role.displayName).tag(role)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
 
                 Section {
                     Toggle("I agree to Terms & Privacy", isOn: $agree)
                 }
 
-                if let e = error {
+                if let errorMessage = auth.errorMessage {
                     Section {
-                        Text(e).foregroundColor(.red)
+                        Text(errorMessage).foregroundColor(.red)
                     }
                 }
 
                 Section {
                     Button("Create Account") {
-                        submit()
+                        Task {
+                            await submit()
+                        }
                     }
-                    .disabled(!canSubmit)
+                    .disabled(!canSubmit || auth.isLoading)
                 }
             }
             .navigationTitle("Create Account")
@@ -74,14 +85,11 @@ struct SignUpView: View {
         agree
     }
 
-    private func submit() {
-        error = nil
+    private func submit() async {
         guard canSubmit else { return }
-        do {
-            try auth.register(fullName: fullName, email: email, phone: phone, password: password)
+        await auth.signUp(email: email, password: password, fullName: fullName, phone: phone, role: selectedRole)
+        if auth.currentUser != nil {
             dismiss()
-        } catch {
-            self.error = (error as NSError).localizedDescription
         }
     }
 }
