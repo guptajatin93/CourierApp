@@ -19,7 +19,8 @@ struct RoleBasedView: View {
                     UserPageView(
                         token: user.token,
                         initialName: user.fullName,
-                        initialEmail: user.email
+                        initialEmail: user.email,
+                        initialPhone: user.phone
                     )
                 case .driver:
                     DriverPageView(

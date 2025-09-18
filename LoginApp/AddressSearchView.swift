@@ -31,7 +31,10 @@ struct AddressSearchView: View {
     @Binding var text: String
     @StateObject private var vm = SearchCompleter()
     @State private var showSuggestions = false
+    @State private var isSelecting = false
+    @State private var isProgrammaticUpdate = false
     var placeholder: String
+    @Binding var disableSuggestions: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,20 +44,43 @@ struct AddressSearchView: View {
                 .cornerRadius(10)
                 .padding(.horizontal)
                 .onChange(of: text) { newValue in
-                    showSuggestions = true
-                    vm.update(query: newValue)
+                    print("📝 Text changed to: '\(newValue)', disableSuggestions: \(disableSuggestions), isSelecting: \(isSelecting), isProgrammaticUpdate: \(isProgrammaticUpdate)")
+                    
+                    if !disableSuggestions && !isSelecting && !isProgrammaticUpdate && !newValue.isEmpty {
+                        print("✅ Showing suggestions")
+                        showSuggestions = true
+                        vm.update(query: newValue)
+                    } else if newValue.isEmpty {
+                        print("❌ Hiding suggestions (empty text)")
+                        showSuggestions = false
+                    } else {
+                        print("🚫 Not showing suggestions (disabled/selecting/programmatic)")
+                    }
+                    
+                    // Reset programmatic update flag after a short delay
+                    if isProgrammaticUpdate {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            isProgrammaticUpdate = false
+                        }
+                    }
                 }
 
-            if showSuggestions && !text.isEmpty {
+            if showSuggestions && !text.isEmpty && !disableSuggestions {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(vm.suggestions.prefix(10), id: \.self) { item in
                             Button {
+                                isSelecting = true
                                 let full = item.subtitle.isEmpty
                                     ? item.title
                                     : "\(item.title), \(item.subtitle)"
                                 text = full
                                 showSuggestions = false
+                                
+                                // Reset selection flag after a short delay
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                    isSelecting = false
+                                }
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.title).font(.body)
@@ -77,5 +103,24 @@ struct AddressSearchView: View {
             }
         }
         .padding(.top, 10)
+        .onTapGesture {
+            // Dismiss suggestions when tapping outside
+            if showSuggestions {
+                showSuggestions = false
+            }
+        }
+        .onChange(of: disableSuggestions) { isDisabled in
+            print("🔧 disableSuggestions changed to: \(isDisabled)")
+            if isDisabled {
+                print("🚫 Hiding suggestions due to disableSuggestions")
+                showSuggestions = false
+            }
+        }
+    }
+    
+    // Method to set text programmatically without showing suggestions
+    func setTextProgrammatically(_ newText: String) {
+        isProgrammaticUpdate = true
+        text = newText
     }
 }

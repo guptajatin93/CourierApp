@@ -9,7 +9,7 @@
 import Foundation
 import FirebaseFirestore
 
-struct Profile: Codable {
+struct Profile: Codable, Equatable {
     @DocumentID var id: String?
     var fullName: String = ""
     var email: String = ""

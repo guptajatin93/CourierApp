@@ -20,7 +20,7 @@ final class FirebaseProfileStore: ObservableObject {
         loadProfile()
     }
     
-    private func loadProfile() {
+    func loadProfile() {
         guard let userId = Auth.auth().currentUser?.uid else { return }
         
         Task {
