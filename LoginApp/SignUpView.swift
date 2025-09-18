@@ -19,6 +19,8 @@ struct SignUpView: View {
     @State private var confirmPassword = ""
     @State private var agree = false
     @State private var selectedRole: UserRole = .user
+    @State private var emailValidationMessage = ""
+    @State private var isEmailValid = false
 
     var body: some View {
         NavigationStack {
@@ -26,10 +28,21 @@ struct SignUpView: View {
                 Section("Your Info") {
                     TextField("Full name", text: $fullName)
                         .textContentType(.name)
-                    TextField("Email", text: $email)
-                        .keyboardType(.emailAddress)
-                        .textContentType(.emailAddress)
-                        .autocapitalization(.none)
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField("Email", text: $email)
+                            .keyboardType(.emailAddress)
+                            .textContentType(.emailAddress)
+                            .autocapitalization(.none)
+                            .onChange(of: email) { newValue in
+                                validateEmail(newValue)
+                            }
+                        
+                        if !emailValidationMessage.isEmpty {
+                            Text(emailValidationMessage)
+                                .font(.caption)
+                                .foregroundColor(isEmailValid ? .green : .red)
+                        }
+                    }
                     TextField("Phone", text: $phone)
                         .keyboardType(.phonePad)
                         .textContentType(.telephoneNumber)
@@ -65,7 +78,7 @@ struct SignUpView: View {
                             await submit()
                         }
                     }
-                    .disabled(!canSubmit || auth.isLoading)
+                    .disabled(!canSubmit || auth.isLoading || !isEmailValid)
                 }
             }
             .navigationTitle("Create Account")
@@ -86,10 +99,59 @@ struct SignUpView: View {
     }
 
     private func submit() async {
-        guard canSubmit else { return }
+        guard canSubmit && isEmailValid else { return }
         await auth.signUp(email: email, password: password, fullName: fullName, phone: phone, role: selectedRole)
         if auth.currentUser != nil {
             dismiss()
         }
+    }
+    
+    // MARK: - Email Validation
+    
+    private func validateEmail(_ email: String) {
+        if email.isEmpty {
+            emailValidationMessage = ""
+            isEmailValid = false
+            return
+        }
+        
+        // Basic format validation
+        let emailRegex = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
+        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailRegex)
+        
+        if !emailPredicate.evaluate(with: email) {
+            emailValidationMessage = "Please enter a valid email address"
+            isEmailValid = false
+            return
+        }
+        
+        // Additional checks
+        if email.count > 254 {
+            emailValidationMessage = "Email address is too long"
+            isEmailValid = false
+            return
+        }
+        
+        if email.hasPrefix(".") || email.hasSuffix(".") {
+            emailValidationMessage = "Email cannot start or end with a dot"
+            isEmailValid = false
+            return
+        }
+        
+        if email.contains("..") {
+            emailValidationMessage = "Email cannot contain consecutive dots"
+            isEmailValid = false
+            return
+        }
+        
+        // Check for common typos (only check for specific typos, not all Gmail addresses)
+        if email.hasSuffix("@gmai.com") || email.hasSuffix("@gmail.co") {
+            emailValidationMessage = "Did you mean @gmail.com?"
+            isEmailValid = false
+            return
+        }
+        
+        emailValidationMessage = "✓ Valid email address"
+        isEmailValid = true
     }
 }
