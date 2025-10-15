@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import FirebaseFirestore
 
 struct AdminPageView: View {
     @StateObject private var orderStore = FirebaseOrderStore()
@@ -14,9 +15,14 @@ struct AdminPageView: View {
     @State private var searchText = ""
     @State private var selectedStatus: OrderStatus? = nil
     @State private var sortOption: OrderSortOption = .newest
+    @State private var analyticsTimeRange: AnalyticsTimeRange = .last7Days
+    @State private var driverCodes: [DriverCode] = []
+    @State private var isLoadingCodes = false
+    @State private var newCodeText = ""
+    @State private var isCreatingCode = false
     
     enum AdminTab {
-        case overview, orders, users, analytics
+        case overview, orders, users, analytics, driverCodes
     }
     
     enum OrderSortOption: String, CaseIterable {
@@ -25,6 +31,32 @@ struct AdminPageView: View {
         case status = "By Status"
         case cost = "By Cost"
         case customer = "By Customer"
+    }
+    
+    enum AnalyticsTimeRange: String, CaseIterable {
+        case last24Hours = "Last 24 Hours"
+        case last7Days = "Last 7 Days"
+        case last30Days = "Last 30 Days"
+        case last90Days = "Last 90 Days"
+        case allTime = "All Time"
+        
+        var dateRange: (start: Date, end: Date) {
+            let now = Date()
+            let calendar = Calendar.current
+            
+            switch self {
+            case .last24Hours:
+                return (calendar.date(byAdding: .hour, value: -24, to: now) ?? now, now)
+            case .last7Days:
+                return (calendar.date(byAdding: .day, value: -7, to: now) ?? now, now)
+            case .last30Days:
+                return (calendar.date(byAdding: .day, value: -30, to: now) ?? now, now)
+            case .last90Days:
+                return (calendar.date(byAdding: .day, value: -90, to: now) ?? now, now)
+            case .allTime:
+                return (Date.distantPast, now)
+            }
+        }
     }
     
     // Computed properties for filtered and sorted orders
@@ -66,6 +98,72 @@ struct AdminPageView: View {
         }
     }
     
+    // MARK: - Analytics Computed Properties
+    
+    private var analyticsOrders: [Order] {
+        let dateRange = analyticsTimeRange.dateRange
+        return orderStore.allOrders.filter { order in
+            order.createdAt >= dateRange.start && order.createdAt <= dateRange.end
+        }
+    }
+    
+    private var totalRevenue: Double {
+        analyticsOrders.filter { $0.status == .delivered }.reduce(0) { $0 + $1.cost }
+    }
+    
+    private var totalOrders: Int {
+        analyticsOrders.count
+    }
+    
+    private var completedOrders: Int {
+        analyticsOrders.filter { $0.status == .delivered }.count
+    }
+    
+    private var cancelledOrders: Int {
+        analyticsOrders.filter { $0.status == .cancelled }.count
+    }
+    
+    private var completionRate: Double {
+        guard totalOrders > 0 else { return 0 }
+        return Double(completedOrders) / Double(totalOrders) * 100
+    }
+    
+    private var averageOrderValue: Double {
+        guard completedOrders > 0 else { return 0 }
+        return totalRevenue / Double(completedOrders)
+    }
+    
+    private var ordersByStatus: [(OrderStatus, Int)] {
+        OrderStatus.allCases.map { status in
+            let count = analyticsOrders.filter { $0.status == status }.count
+            return (status, count)
+        }.sorted { $0.1 > $1.1 }
+    }
+    
+    private var topDrivers: [(String, Int, Double)] {
+        let driverStats = Dictionary(grouping: analyticsOrders.filter { $0.driverId != nil && $0.status == .delivered }) { $0.driverId! }
+            .mapValues { orders in
+                (count: orders.count, revenue: orders.reduce(0) { $0 + $1.cost })
+            }
+        
+        return driverStats.map { (driverId, stats) in
+            (orderStore.getDriverName(for: driverId), stats.count, stats.revenue)
+        }.sorted { $0.1 > $1.1 }
+    }
+    
+    private var ordersByDay: [(String, Int)] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: analyticsOrders) { order in
+            calendar.dateInterval(of: .day, for: order.createdAt)?.start ?? order.createdAt
+        }
+        
+        return grouped.map { (date, orders) in
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM dd"
+            return (formatter.string(from: date), orders.count)
+        }.sorted { $0.0 < $1.0 }
+    }
+    
     var body: some View {
         TabView(selection: $selectedTab) {
             overviewTab
@@ -83,6 +181,10 @@ struct AdminPageView: View {
             analyticsTab
                 .tabItem { Label("Analytics", systemImage: "chart.line.uptrend.xyaxis") }
                 .tag(AdminTab.analytics)
+            
+            driverCodesTab
+                .tabItem { Label("Driver Codes", systemImage: "key.fill") }
+                .tag(AdminTab.driverCodes)
         }
         .onAppear {
             loadAdminData()
@@ -244,7 +346,7 @@ struct AdminPageView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
-                    .padding()
+                        .padding()
                 } else {
                     List(sortedOrders) { order in
                         AdminOrderCard(order: order, orderStore: orderStore)
@@ -309,26 +411,111 @@ struct AdminPageView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
-                    Text("Analytics Coming Soon")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
-                        .padding()
-                    
-                    Text("This section will include:")
-                        .font(.headline)
-                        .padding(.top)
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("• Order completion rates")
-                        Text("• Driver performance metrics")
-                        Text("• Revenue analytics")
-                        Text("• Customer satisfaction scores")
-                        Text("• Geographic delivery patterns")
+                    // Time Range Selector
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Time Range")
+                            .font(.headline)
+                        
+                        Picker("Time Range", selection: $analyticsTimeRange) {
+                            ForEach(AnalyticsTimeRange.allCases, id: \.self) { range in
+                                Text(range.rawValue).tag(range)
+                            }
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
                     }
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .padding()
+                    .padding(.horizontal)
+                    
+                    // Key Metrics
+                    LazyVGrid(columns: [
+                        GridItem(.flexible()),
+                        GridItem(.flexible())
+                    ], spacing: 16) {
+                        AnalyticsCard(title: "Total Revenue", value: "$\(String(format: "%.2f", totalRevenue))", color: .green, icon: "dollarsign.circle.fill")
+                        AnalyticsCard(title: "Total Orders", value: "\(totalOrders)", color: .blue, icon: "list.bullet")
+                        AnalyticsCard(title: "Completion Rate", value: "\(String(format: "%.1f", completionRate))%", color: .purple, icon: "checkmark.circle.fill")
+                        AnalyticsCard(title: "Avg Order Value", value: "$\(String(format: "%.2f", averageOrderValue))", color: .orange, icon: "chart.bar.fill")
+                    }
+                    .padding(.horizontal)
+                    
+                    // Order Status Breakdown
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Order Status Breakdown")
+                        .font(.headline)
+                            .padding(.horizontal)
+                        
+                        LazyVGrid(columns: [
+                            GridItem(.flexible()),
+                            GridItem(.flexible())
+                        ], spacing: 12) {
+                            ForEach(ordersByStatus, id: \.0) { status, count in
+                                StatusAnalyticsCard(status: status, count: count, total: totalOrders)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                    
+                    // Top Drivers
+                    if !topDrivers.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Top Performing Drivers")
+                                .font(.headline)
+                                .padding(.horizontal)
+                            
+                            ForEach(Array(topDrivers.prefix(5).enumerated()), id: \.offset) { index, driver in
+                                DriverAnalyticsCard(
+                                    rank: index + 1,
+                                    name: driver.0,
+                                    orders: driver.1,
+                                    revenue: driver.2
+                                )
+                            }
+                        }
+                    }
+                    
+                    // Daily Orders Chart
+                    if !ordersByDay.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Orders by Day")
+                                .font(.headline)
+                                .padding(.horizontal)
+                            
+                            DailyOrdersChart(data: ordersByDay)
+                                .padding(.horizontal)
+                        }
+                    }
+                    
+                    // Revenue Trends
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Revenue Insights")
+                            .font(.headline)
+                            .padding(.horizontal)
+                        
+                        VStack(spacing: 16) {
+                            RevenueInsightCard(
+                                title: "Completed Orders",
+                                value: "\(completedOrders)",
+                                subtitle: "\(String(format: "%.1f", completionRate))% completion rate",
+                                color: .green
+                            )
+                            
+                            RevenueInsightCard(
+                                title: "Cancelled Orders",
+                                value: "\(cancelledOrders)",
+                                subtitle: "\(String(format: "%.1f", Double(cancelledOrders) / Double(totalOrders) * 100))% cancellation rate",
+                                color: .red
+                            )
+                            
+                            RevenueInsightCard(
+                                title: "Active Drivers",
+                                value: "\(userStore.drivers.count)",
+                                subtitle: "\(topDrivers.count) drivers with completed orders",
+                                color: .blue
+                            )
+                        }
+                        .padding(.horizontal)
+                    }
                 }
+                .padding(.vertical)
             }
             .navigationTitle("Analytics")
             .toolbar {
@@ -342,10 +529,267 @@ struct AdminPageView: View {
         }
     }
     
+    // MARK: - Driver Codes Tab
+    private var driverCodesTab: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                // Create New Code Section
+                VStack(spacing: 12) {
+                    Text("Create New Driver Code")
+                        .font(.headline)
+                        .padding(.horizontal)
+                    
+                    HStack {
+                        TextField("Enter code (e.g., DRIVER001)", text: $newCodeText)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .textCase(.uppercase)
+                            .autocapitalization(.allCharacters)
+                        
+                        Button("Create") {
+                            createDriverCode()
+                        }
+                        .disabled(newCodeText.isEmpty || isCreatingCode)
+                        .buttonStyle(ActionButtonStyle(color: .blue))
+                    }
+                    .padding(.horizontal)
+                }
+                .padding()
+                .background(Color(.systemGray6))
+                
+                Divider()
+                
+                // Codes List
+                if isLoadingCodes {
+                    ProgressView("Loading codes...")
+                        .padding()
+                } else if driverCodes.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 50))
+                            .foregroundColor(.secondary)
+                        Text("No driver codes created yet")
+                            .font(.title2)
+                            .foregroundColor(.secondary)
+                        Text("Create your first driver code above")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    }
+                    .padding()
+                } else {
+                    List(driverCodes) { code in
+                        DriverCodeCard(code: code) {
+                            deactivateCode(code)
+                }
+            }
+                }
+            }
+            .navigationTitle("Driver Codes")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Sign Out") {
+                        NotificationCenter.default.post(name: .didSignOut, object: nil)
+                    }
+                    .foregroundColor(.red)
+                }
+            }
+            .refreshable {
+                loadDriverCodes()
+            }
+            .onAppear {
+                loadDriverCodes()
+            }
+        }
+    }
+    
     // MARK: - Helper Methods
     private func loadAdminData() {
         orderStore.loadAllOrders()
         userStore.loadAllUsers()
+    }
+    
+    private func loadDriverCodes() {
+        isLoadingCodes = true
+        
+        Task {
+            do {
+                let codesData = try await FirebaseService.shared.getAllDriverCodes()
+                await MainActor.run {
+                    self.driverCodes = codesData.compactMap { data in
+                        DriverCode.fromDictionary(data)
+                    }
+                    self.isLoadingCodes = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoadingCodes = false
+                    print("Error loading driver codes: \(error)")
+                }
+            }
+        }
+    }
+    
+    private func createDriverCode() {
+        guard !newCodeText.isEmpty else { return }
+        
+        isCreatingCode = true
+        
+        Task {
+            do {
+                try await FirebaseService.shared.createDriverCode(
+                    newCodeText.trimmingCharacters(in: .whitespacesAndNewlines),
+                    createdBy: userStore.allUsers.first { $0.role == .admin }?.id ?? "unknown",
+                    notes: "Created via admin interface"
+                )
+                
+                await MainActor.run {
+                    self.newCodeText = ""
+                    self.isCreatingCode = false
+                    loadDriverCodes() // Refresh the list
+                }
+            } catch {
+                await MainActor.run {
+                    self.isCreatingCode = false
+                    print("Error creating driver code: \(error)")
+                }
+            }
+        }
+    }
+    
+    private func deactivateCode(_ code: DriverCode) {
+        Task {
+            do {
+                try await FirebaseService.shared.deactivateDriverCode(code.id)
+                await MainActor.run {
+                    loadDriverCodes() // Refresh the list
+                }
+            } catch {
+                print("Error deactivating code: \(error)")
+            }
+        }
+    }
+}
+
+// MARK: - Driver Code Model
+
+struct DriverCode: Identifiable {
+    let id: String
+    let code: String
+    let isActive: Bool
+    let createdAt: Date
+    let createdBy: String
+    let usedAt: Date?
+    let usedBy: String?
+    let notes: String?
+    
+    var isUsed: Bool {
+        usedAt != nil
+    }
+    
+    var statusText: String {
+        if !isActive {
+            return "Deactivated"
+        } else if isUsed {
+            return "Used"
+        } else {
+            return "Active"
+        }
+    }
+    
+    var statusColor: Color {
+        if !isActive {
+            return .red
+        } else if isUsed {
+            return .green
+        } else {
+            return .blue
+        }
+    }
+    
+    static func fromDictionary(_ data: [String: Any]) -> DriverCode? {
+        guard let id = data["id"] as? String,
+              let code = data["code"] as? String,
+              let isActive = data["isActive"] as? Bool,
+              let createdAt = data["createdAt"] as? Timestamp,
+              let createdBy = data["createdBy"] as? String else {
+            return nil
+        }
+        
+        let usedAt = data["usedAt"] as? Timestamp
+        let usedBy = data["usedBy"] as? String
+        let notes = data["notes"] as? String
+        
+        return DriverCode(
+            id: id,
+            code: code,
+            isActive: isActive,
+            createdAt: createdAt.dateValue(),
+            createdBy: createdBy,
+            usedAt: usedAt?.dateValue(),
+            usedBy: usedBy,
+            notes: notes
+        )
+    }
+}
+
+// MARK: - Driver Code Card
+
+struct DriverCodeCard: View {
+    let code: DriverCode
+    let onDeactivate: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(code.code)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                
+                Spacer()
+                
+                Text(code.statusText)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(code.statusColor.opacity(0.2))
+                    .foregroundColor(code.statusColor)
+                    .cornerRadius(6)
+            }
+            
+            if let notes = code.notes, !notes.isEmpty {
+                Text(notes)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            HStack {
+                Text("Created: \(code.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                if let usedAt = code.usedAt {
+                    Text("Used: \(usedAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            if code.isActive && !code.isUsed {
+                HStack {
+                    Spacer()
+                    Button("Deactivate") {
+                        onDeactivate()
+                    }
+                    .font(.caption)
+                    .foregroundColor(.red)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(8)
     }
 }
 
@@ -389,17 +833,17 @@ struct AdminOrderCard: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    if let driverId = order.driverId {
+                if let driverId = order.driverId {
                         Text("Driver: \(orderStore.getDriverName(for: driverId))")
                             .font(.caption)
                             .fontWeight(.medium)
                         Text("ID: \(driverId.suffix(6))")
                             .font(.caption2)
                             .foregroundColor(.secondary)
-                    } else {
-                        Text("No driver assigned")
+                } else {
+                    Text("No driver assigned")
                             .font(.caption)
-                            .foregroundColor(.orange)
+                        .foregroundColor(.orange)
                     }
                 }
             }
@@ -975,6 +1419,210 @@ struct AdminNotesView: View {
             isSaving = false
             dismiss()
         }
+    }
+}
+
+// MARK: - Analytics Card Components
+
+struct AnalyticsCard: View {
+    let title: String
+    let value: String
+    let color: Color
+    let icon: String
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                    .font(.title2)
+                Spacer()
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(value)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(color)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding()
+        .background(color.opacity(0.1))
+        .cornerRadius(12)
+    }
+}
+
+struct StatusAnalyticsCard: View {
+    let status: OrderStatus
+    let count: Int
+    let total: Int
+    
+    private var percentage: Double {
+        guard total > 0 else { return 0 }
+        return Double(count) / Double(total) * 100
+    }
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text(status.displayName)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("\(count)")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(status.color)
+            }
+            
+            HStack {
+                Text("\(String(format: "%.1f", percentage))%")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            
+            // Progress bar
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color(.systemGray5))
+                        .frame(height: 4)
+                        .cornerRadius(2)
+                    
+                    Rectangle()
+                        .fill(status.color)
+                        .frame(width: geometry.size.width * (percentage / 100), height: 4)
+                        .cornerRadius(2)
+                }
+            }
+            .frame(height: 4)
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(8)
+    }
+}
+
+struct DriverAnalyticsCard: View {
+    let rank: Int
+    let name: String
+    let orders: Int
+    let revenue: Double
+    
+    var body: some View {
+        HStack {
+            // Rank
+            Text("#\(rank)")
+                .font(.headline)
+                .fontWeight(.bold)
+                .foregroundColor(.blue)
+                .frame(width: 30)
+            
+            // Driver Info
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.headline)
+                Text("\(orders) orders")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            // Revenue
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("$\(String(format: "%.2f", revenue))")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.green)
+                Text("earned")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(8)
+    }
+}
+
+struct DailyOrdersChart: View {
+    let data: [(String, Int)]
+    
+    private var maxValue: Int {
+        data.map { $0.1 }.max() ?? 1
+    }
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(alignment: .bottom, spacing: 8) {
+                ForEach(data, id: \.0) { day, count in
+                    VStack(spacing: 4) {
+                        // Bar
+                        Rectangle()
+                            .fill(Color.blue.opacity(0.7))
+                            .frame(width: 30, height: CGFloat(count) / CGFloat(maxValue) * 100)
+                            .cornerRadius(4)
+                        
+                        // Day label
+                        Text(day)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .rotationEffect(.degrees(-45))
+                    }
+                }
+            }
+            .frame(height: 120)
+            
+            // Legend
+            HStack {
+                Text("Orders per day")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("Max: \(maxValue)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(8)
+    }
+}
+
+struct RevenueInsightCard: View {
+    let title: String
+    let value: String
+    let subtitle: String
+    let color: Color
+    
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Text(value)
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundColor(color)
+        }
+        .padding()
+        .background(color.opacity(0.1))
+        .cornerRadius(8)
     }
 }
 

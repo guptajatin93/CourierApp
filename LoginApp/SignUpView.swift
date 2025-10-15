@@ -21,6 +21,10 @@ struct SignUpView: View {
     @State private var selectedRole: UserRole = .user
     @State private var emailValidationMessage = ""
     @State private var isEmailValid = false
+    @State private var inviteCode = ""
+    @State private var isCodeValid = false
+    @State private var codeValidationMessage = ""
+    @State private var isCheckingCode = false
 
     var body: some View {
         NavigationStack {
@@ -53,13 +57,40 @@ struct SignUpView: View {
                     SecureField("Confirm password", text: $confirmPassword)
                 }
                 
+                Section("Invite Code (Optional)") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField("Enter driver invite code", text: $inviteCode)
+                            .textCase(.uppercase)
+                            .autocapitalization(.allCharacters)
+                            .onChange(of: inviteCode) { newValue in
+                                validateInviteCode(newValue)
+                            }
+                        
+                        if isCheckingCode {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Checking code...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else if !codeValidationMessage.isEmpty {
+                            Text(codeValidationMessage)
+                                .font(.caption)
+                                .foregroundColor(isCodeValid ? .green : .red)
+                        }
+                    }
+                }
+                
                 Section("Account Type") {
                     Picker("Role", selection: $selectedRole) {
-                        ForEach(UserRole.allCases, id: \.self) { role in
-                            Text(role.displayName).tag(role)
+                        Text("Customer").tag(UserRole.user)
+                        if isCodeValid {
+                            Text("Driver").tag(UserRole.driver)
                         }
                     }
                     .pickerStyle(.segmented)
+                    .disabled(!isCodeValid && selectedRole == .driver)
                 }
 
                 Section {
@@ -100,7 +131,13 @@ struct SignUpView: View {
 
     private func submit() async {
         guard canSubmit && isEmailValid else { return }
-        await auth.signUp(email: email, password: password, fullName: fullName, phone: phone, role: selectedRole)
+        
+        // If signing up as driver, validate and use the invite code
+        if selectedRole == .driver {
+            guard isCodeValid && !inviteCode.isEmpty else { return }
+        }
+        
+        await auth.signUp(email: email, password: password, fullName: fullName, phone: phone, role: selectedRole, inviteCode: selectedRole == .driver ? inviteCode : nil)
         if auth.currentUser != nil {
             dismiss()
         }
@@ -153,5 +190,52 @@ struct SignUpView: View {
         
         emailValidationMessage = "✓ Valid email address"
         isEmailValid = true
+    }
+    
+    // MARK: - Invite Code Validation
+    
+    private func validateInviteCode(_ code: String) {
+        if code.isEmpty {
+            codeValidationMessage = ""
+            isCodeValid = false
+            selectedRole = .user // Reset to customer if code is cleared
+            return
+        }
+        
+        // Basic format validation
+        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedCode.count < 3 {
+            codeValidationMessage = "Code too short"
+            isCodeValid = false
+            return
+        }
+        
+        // Check code with Firebase
+        isCheckingCode = true
+        codeValidationMessage = ""
+        
+        Task {
+            do {
+                let isValid = try await FirebaseService.shared.validateDriverCode(trimmedCode)
+                await MainActor.run {
+                    isCheckingCode = false
+                    if isValid {
+                        codeValidationMessage = "✓ Valid driver code"
+                        isCodeValid = true
+                    } else {
+                        codeValidationMessage = "Invalid or already used code"
+                        isCodeValid = false
+                        selectedRole = .user // Reset to customer if code is invalid
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isCheckingCode = false
+                    codeValidationMessage = "Error checking code. Please try again."
+                    isCodeValid = false
+                    selectedRole = .user
+                }
+            }
+        }
     }
 }

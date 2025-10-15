@@ -51,7 +51,7 @@ final class FirebaseAuthStore: ObservableObject {
         isLoading = false
     }
     
-    func signUp(email: String, password: String, fullName: String, phone: String, role: UserRole = .user) async {
+    func signUp(email: String, password: String, fullName: String, phone: String, role: UserRole = .user, inviteCode: String? = nil) async {
         isLoading = true
         errorMessage = nil
         
@@ -63,6 +63,11 @@ final class FirebaseAuthStore: ObservableObject {
                 phone: phone,
                 role: role
             )
+            
+            // If user signed up as driver with invite code, mark the code as used
+            if role == .driver, let code = inviteCode, let userId = currentUser?.id {
+                try await firebaseService.useDriverCode(code, userId: userId)
+            }
         } catch {
             errorMessage = error.localizedDescription
             currentUser = nil

@@ -131,4 +131,65 @@ final class FirebaseService: ObservableObject {
     func updateOrderStatus(_ order: Order) async throws {
         try await db.collection("orders").document(order.id ?? "").setData(from: order)
     }
+    
+    // MARK: - Driver Codes Management
+    
+    func validateDriverCode(_ code: String) async throws -> Bool {
+        let snapshot = try await db.collection("driver_codes")
+            .whereField("code", isEqualTo: code.uppercased())
+            .whereField("isActive", isEqualTo: true)
+            .whereField("usedAt", isEqualTo: NSNull())
+            .getDocuments()
+        
+        return !snapshot.documents.isEmpty
+    }
+    
+    func useDriverCode(_ code: String, userId: String) async throws {
+        let snapshot = try await db.collection("driver_codes")
+            .whereField("code", isEqualTo: code.uppercased())
+            .whereField("isActive", isEqualTo: true)
+            .whereField("usedAt", isEqualTo: NSNull())
+            .getDocuments()
+        
+        guard let document = snapshot.documents.first else {
+            throw NSError(domain: "DriverCodeError", code: 404, userInfo: [NSLocalizedDescriptionKey: "Driver code not found or already used"])
+        }
+        
+        try await document.reference.updateData([
+            "usedAt": Timestamp(date: Date()),
+            "usedBy": userId
+        ])
+    }
+    
+    func createDriverCode(_ code: String, createdBy: String, notes: String? = nil) async throws {
+        let codeData: [String: Any] = [
+            "code": code.uppercased(),
+            "isActive": true,
+            "createdAt": Timestamp(date: Date()),
+            "createdBy": createdBy,
+            "usedAt": NSNull(),
+            "usedBy": NSNull(),
+            "notes": notes ?? NSNull()
+        ]
+        
+        try await db.collection("driver_codes").addDocument(data: codeData)
+    }
+    
+    func getAllDriverCodes() async throws -> [[String: Any]] {
+        let snapshot = try await db.collection("driver_codes")
+            .order(by: "createdAt", descending: true)
+            .getDocuments()
+        
+        return snapshot.documents.map { document in
+            var data = document.data()
+            data["id"] = document.documentID
+            return data
+        }
+    }
+    
+    func deactivateDriverCode(_ codeId: String) async throws {
+        try await db.collection("driver_codes").document(codeId).updateData([
+            "isActive": false
+        ])
+    }
 }
