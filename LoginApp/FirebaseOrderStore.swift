@@ -17,6 +17,8 @@ final class FirebaseOrderStore: ObservableObject {
     @Published var allOrders: [Order] = []
     @Published var isLoading = false
     @Published var errorMessage: String? = nil
+    @Published var driverNames: [String: String] = [:] // Maps driverId to driver name
+    @Published var customerNames: [String: String] = [:] // Maps userId to customer name
     
     private let firebaseService = FirebaseService.shared
     
@@ -46,6 +48,8 @@ final class FirebaseOrderStore: ObservableObject {
                     self.orders = fetchedOrders
                     self.isLoading = false
                 }
+                // Load driver and customer names for orders
+                await loadUserNames(for: fetchedOrders)
             } catch {
                 await MainActor.run {
                     self.errorMessage = error.localizedDescription
@@ -137,6 +141,8 @@ final class FirebaseOrderStore: ObservableObject {
                     self.allOrders = allOrders
                     self.isLoading = false
                 }
+                // Load driver and customer names for orders
+                await loadUserNames(for: allOrders)
             } catch {
                 await MainActor.run {
                     self.isLoading = false
@@ -201,6 +207,76 @@ final class FirebaseOrderStore: ObservableObject {
                 
                 try await firebaseService.updateOrderStatus(updatedOrder)
                 loadDriverOrders(driverId: order.driverId ?? "")
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+    
+    // MARK: - User Name Management
+    
+    private func loadUserNames(for orders: [Order]) async {
+        let driverIds = Set(orders.compactMap { $0.driverId })
+        let customerIds = Set(orders.map { $0.userId })
+        
+        // Load driver names
+        for driverId in driverIds {
+            // Skip if we already have this driver's name
+            if driverNames[driverId] != nil { continue }
+            
+            do {
+                let driver = try await firebaseService.fetchUser(uid: driverId)
+                await MainActor.run {
+                    self.driverNames[driverId] = driver.fullName
+                }
+            } catch {
+                print("Error fetching driver name for ID \(driverId): \(error)")
+                // Set a fallback name if we can't fetch the driver info
+                await MainActor.run {
+                    self.driverNames[driverId] = "Driver \(driverId.suffix(6))"
+                }
+            }
+        }
+        
+        // Load customer names
+        for customerId in customerIds {
+            // Skip if we already have this customer's name
+            if customerNames[customerId] != nil { continue }
+            
+            do {
+                let customer = try await firebaseService.fetchUser(uid: customerId)
+                await MainActor.run {
+                    self.customerNames[customerId] = customer.fullName
+                }
+            } catch {
+                print("Error fetching customer name for ID \(customerId): \(error)")
+                // Set a fallback name if we can't fetch the customer info
+                await MainActor.run {
+                    self.customerNames[customerId] = "Customer \(customerId.suffix(6))"
+                }
+            }
+        }
+    }
+    
+    func getDriverName(for driverId: String) -> String {
+        return driverNames[driverId] ?? "Driver \(driverId.suffix(6))"
+    }
+    
+    func getCustomerName(for userId: String) -> String {
+        return customerNames[userId] ?? "Customer \(userId.suffix(6))"
+    }
+    
+    // MARK: - Admin Order Management
+    
+    func updateOrderStatus(_ order: Order) {
+        Task {
+            do {
+                try await firebaseService.updateOrderStatus(order)
+                await MainActor.run {
+                    loadAllOrders()
+                }
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription

@@ -158,7 +158,7 @@ struct UserPageView: View {
                             }
                             
                             if let driverId = order.driverId {
-                                Text("Driver: \(driverId)")
+                                Text("Driver: \(orderStore.getDriverName(for: driverId))")
                                     .font(.caption)
                                     .foregroundColor(.green)
                             }
