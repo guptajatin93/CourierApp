@@ -8,16 +8,37 @@
 import SwiftUI
 import MapKit
 
+/// Main interface for drivers to manage their delivery assignments
+/// Provides order acceptance, tracking, and completion capabilities
+/// Only accessible to users with driver role
 struct DriverPageView: View {
+    // MARK: - State Management
+    
+    /// Manages all order-related data and operations for the driver
     @StateObject private var orderStore = FirebaseOrderStore()
+    
+    /// Currently selected tab in the driver interface
     @State private var selectedTab: DriverTab = .available
+    
+    /// Driver's online/offline status for order availability
     @State private var isOnline = false
     
+    // MARK: - Driver Properties
+    
+    /// Unique identifier for the driver
     let driverId: String
+    
+    /// Display name of the driver
     let driverName: String
     
+    // MARK: - Enums
+    
+    /// Available tabs in the driver interface
     enum DriverTab {
-        case available, assigned, completed, profile
+        case available   // Available orders to accept
+        case assigned    // Currently assigned orders
+        case completed   // Completed order history
+        case profile     // Driver profile and settings
     }
     
     var body: some View {

@@ -1,32 +1,80 @@
 import SwiftUI
 import MapKit
 
+/// Main user interface for customers to create and manage delivery orders
+/// Provides order creation, tracking, and management capabilities
+/// Only accessible to users with customer role
 struct UserPageView: View {
+    // MARK: - State Management
+    
+    /// Manages all order-related data and operations for the current user
     @StateObject private var orderStore = FirebaseOrderStore()
+    
+    /// Manages user profile data and settings
     @StateObject private var profileStore = FirebaseProfileStore()
+    
+    /// Currently selected tab in the user interface
     @State private var selectedTab: Tab = .home
+    
+    /// Pickup address for the current order
     @State private var pickupAddress: String = ""
+    
+    /// Delivery address for the current order
     @State private var dropAddress: String = ""
+    
+    /// Controls the display of quick address setup
     @State private var isSettingQuickAddresses = false
+    
+    /// Indicates if addresses are being reversed (pickup ↔ dropoff)
     @State private var isReversing = false
-    @State private var route: MKRoute? = nil   // ✅ optional
+    
+    /// Calculated route between pickup and dropoff locations
+    @State private var route: MKRoute? = nil
+    
+    /// Controls the display of the map view
     @State private var showMap = false
+    
+    /// Calculated delivery cost for the current order
     @State private var deliveryCost: Double? = nil
 
-    // Order options
+    // MARK: - Order Configuration
+    
+    /// Selected package size for the current order
     @State private var packageSize: String = "Medium"
+    
+    /// Selected package weight for the current order
     @State private var packageWeight: String = "< 5kg"
+    
+    /// Whether the package is fragile and requires special handling
     @State private var fragile: Bool = false
+    
+    /// Selected delivery speed for the current order
     @State private var deliverySpeed: String = "Standard"
+    
+    /// Special delivery instructions from the customer
     @State private var instructions: String = ""
     
+    // MARK: - User Properties
+    
+    /// User's unique token for identification
     var token: String
+    
+    /// User's initial name (if provided during initialization)
     var initialName: String? = nil
+    
+    /// User's initial email (if provided during initialization)
     var initialEmail: String? = nil
+    
+    /// User's initial phone (if provided during initialization)
     var initialPhone: String? = nil
 
+    // MARK: - Enums
+    
+    /// Available tabs in the user interface
     enum Tab {
-        case home, pastOrders, profile
+        case home        // Order creation and quick actions
+        case pastOrders  // Order history and tracking
+        case profile     // User profile and settings
     }
 
     var body: some View {

@@ -51,6 +51,24 @@ final class FirebaseAuthStore: ObservableObject {
         isLoading = false
     }
     
+    /// Signs in a user with phone number and password
+    /// - Parameters:
+    ///   - phone: User's phone number
+    ///   - password: User's password
+    func signInWithPhone(phone: String, password: String) async {
+        isLoading = true
+        errorMessage = nil
+        
+        do {
+            currentUser = try await firebaseService.signInWithPhone(phone: phone, password: password)
+        } catch {
+            errorMessage = error.localizedDescription
+            currentUser = nil
+        }
+        
+        isLoading = false
+    }
+    
     func signUp(email: String, password: String, fullName: String, phone: String, role: UserRole = .user, inviteCode: String? = nil) async {
         isLoading = true
         errorMessage = nil

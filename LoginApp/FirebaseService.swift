@@ -26,7 +26,42 @@ final class FirebaseService: ObservableObject {
         return try await fetchUser(uid: result.user.uid)
     }
     
+    /// Signs in a user with phone number and password
+    /// - Parameters:
+    ///   - phone: User's phone number
+    ///   - password: User's password
+    /// - Returns: AppUser object with user information
+    /// - Throws: FirebaseAuthError if authentication fails
+    func signInWithPhone(phone: String, password: String) async throws -> AppUser {
+        // First, find the user by phone number
+        let normalizedPhone = phone.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+        
+        let snapshot = try await db.collection("users")
+            .whereField("phone", isEqualTo: normalizedPhone)
+            .getDocuments()
+        
+        guard let userDoc = snapshot.documents.first else {
+            throw NSError(domain: "FirebaseAuthError", code: 17011, userInfo: [NSLocalizedDescriptionKey: "No account found with this phone number."])
+        }
+        
+        let user = try userDoc.data(as: AppUser.self)
+        
+        // Now sign in with the email and password
+        let result = try await Auth.auth().signIn(withEmail: user.email, password: password)
+        return try await fetchUser(uid: result.user.uid)
+    }
+    
     func signUp(email: String, password: String, fullName: String, phone: String, role: UserRole = .user) async throws -> AppUser {
+        // Check for duplicate email before attempting Firebase Auth
+        if try await isEmailAlreadyInUse(email) {
+            throw NSError(domain: "FirebaseAuthError", code: 17007, userInfo: [NSLocalizedDescriptionKey: "An account with this email already exists."])
+        }
+        
+        // Check for duplicate phone number
+        if try await isPhoneAlreadyInUse(phone) {
+            throw NSError(domain: "FirebaseAuthError", code: 17008, userInfo: [NSLocalizedDescriptionKey: "An account with this phone number already exists."])
+        }
+        
         let result = try await Auth.auth().createUser(withEmail: email, password: password)
         
         let user = AppUser(
@@ -191,5 +226,34 @@ final class FirebaseService: ObservableObject {
         try await db.collection("driver_codes").document(codeId).updateData([
             "isActive": false
         ])
+    }
+    
+    // MARK: - Duplicate Checking
+    
+    /// Checks if an email address is already in use by another user
+    /// - Parameter email: Email address to check
+    /// - Returns: True if email is already in use, false otherwise
+    /// - Throws: FirebaseError if check fails
+    func isEmailAlreadyInUse(_ email: String) async throws -> Bool {
+        let snapshot = try await db.collection("users")
+            .whereField("email", isEqualTo: email)
+            .getDocuments()
+        
+        return !snapshot.documents.isEmpty
+    }
+    
+    /// Checks if a phone number is already in use by another user
+    /// - Parameter phone: Phone number to check
+    /// - Returns: True if phone is already in use, false otherwise
+    /// - Throws: FirebaseError if check fails
+    func isPhoneAlreadyInUse(_ phone: String) async throws -> Bool {
+        // Normalize phone number for comparison (remove formatting)
+        let normalizedPhone = phone.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+        
+        let snapshot = try await db.collection("users")
+            .whereField("phone", isEqualTo: normalizedPhone)
+            .getDocuments()
+        
+        return !snapshot.documents.isEmpty
     }
 }

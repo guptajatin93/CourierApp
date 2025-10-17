@@ -8,31 +8,66 @@
 import SwiftUI
 import FirebaseFirestore
 
+/// Main admin dashboard providing comprehensive system management capabilities
+/// Includes order management, user management, analytics, and driver code administration
+/// Only accessible to users with admin role
 struct AdminPageView: View {
+    // MARK: - State Management
+    
+    /// Manages all order-related data and operations
     @StateObject private var orderStore = FirebaseOrderStore()
+    
+    /// Manages all user-related data and operations
     @StateObject private var userStore = FirebaseUserStore()
+    
+    /// Currently selected tab in the admin interface
     @State private var selectedTab: AdminTab = .overview
+    
+    /// Search text for filtering orders and users
     @State private var searchText = ""
+    
+    /// Selected order status for filtering
     @State private var selectedStatus: OrderStatus? = nil
+    
+    /// Current sorting option for orders
     @State private var sortOption: OrderSortOption = .newest
+    
+    /// Time range for analytics calculations
     @State private var analyticsTimeRange: AnalyticsTimeRange = .last7Days
+    
+    /// List of driver invite codes for management
     @State private var driverCodes: [DriverCode] = []
+    
+    /// Loading state for driver codes operations
     @State private var isLoadingCodes = false
+    
+    /// Text input for creating new driver codes
     @State private var newCodeText = ""
+    
+    /// Loading state for code creation
     @State private var isCreatingCode = false
     
+    // MARK: - Enums
+    
+    /// Available tabs in the admin interface
     enum AdminTab {
-        case overview, orders, users, analytics, driverCodes
+        case overview      // Dashboard with key metrics and recent activity
+        case orders        // Order management and filtering
+        case users         // User management and role administration
+        case analytics     // Business analytics and reporting
+        case driverCodes   // Driver invite code management
     }
     
+    /// Available sorting options for orders
     enum OrderSortOption: String, CaseIterable {
-        case newest = "Newest First"
-        case oldest = "Oldest First"
-        case status = "By Status"
-        case cost = "By Cost"
-        case customer = "By Customer"
+        case newest = "Newest First"     // Sort by creation date (newest first)
+        case oldest = "Oldest First"     // Sort by creation date (oldest first)
+        case status = "By Status"        // Sort by order status
+        case cost = "By Cost"           // Sort by order cost (highest first)
+        case customer = "By Customer"    // Sort by customer name alphabetically
     }
     
+    /// Time ranges for analytics calculations
     enum AnalyticsTimeRange: String, CaseIterable {
         case last24Hours = "Last 24 Hours"
         case last7Days = "Last 7 Days"
@@ -40,6 +75,7 @@ struct AdminPageView: View {
         case last90Days = "Last 90 Days"
         case allTime = "All Time"
         
+        /// Returns the date range for the selected time period
         var dateRange: (start: Date, end: Date) {
             let now = Date()
             let calendar = Calendar.current
@@ -59,11 +95,14 @@ struct AdminPageView: View {
         }
     }
     
-    // Computed properties for filtered and sorted orders
+    // MARK: - Computed Properties
+    
+    /// Orders filtered by search text and status selection
+    /// Applies search across pickup/dropoff addresses and customer/driver names
     private var filteredOrders: [Order] {
         var orders = orderStore.allOrders
         
-        // Filter by search text
+        // Filter by search text - searches across multiple fields
         if !searchText.isEmpty {
             orders = orders.filter { order in
                 order.pickup.localizedCaseInsensitiveContains(searchText) ||
@@ -73,7 +112,7 @@ struct AdminPageView: View {
             }
         }
         
-        // Filter by status
+        // Filter by selected status
         if let status = selectedStatus {
             orders = orders.filter { $0.status == status }
         }
@@ -81,6 +120,8 @@ struct AdminPageView: View {
         return orders
     }
     
+    /// Orders sorted according to the selected sort option
+    /// Provides multiple sorting criteria for different admin needs
     private var sortedOrders: [Order] {
         switch sortOption {
         case .newest:
@@ -100,6 +141,8 @@ struct AdminPageView: View {
     
     // MARK: - Analytics Computed Properties
     
+    /// Orders filtered by the selected analytics time range
+    /// Used for calculating metrics and generating reports
     private var analyticsOrders: [Order] {
         let dateRange = analyticsTimeRange.dateRange
         return orderStore.allOrders.filter { order in
@@ -107,27 +150,33 @@ struct AdminPageView: View {
         }
     }
     
+    /// Total revenue from completed orders in the selected time range
     private var totalRevenue: Double {
         analyticsOrders.filter { $0.status == .delivered }.reduce(0) { $0 + $1.cost }
     }
     
+    /// Total number of orders in the selected time range
     private var totalOrders: Int {
         analyticsOrders.count
     }
     
+    /// Number of successfully completed orders
     private var completedOrders: Int {
         analyticsOrders.filter { $0.status == .delivered }.count
     }
     
+    /// Number of cancelled orders
     private var cancelledOrders: Int {
         analyticsOrders.filter { $0.status == .cancelled }.count
     }
     
+    /// Percentage of orders that were successfully completed
     private var completionRate: Double {
         guard totalOrders > 0 else { return 0 }
         return Double(completedOrders) / Double(totalOrders) * 100
     }
     
+    /// Average value of completed orders
     private var averageOrderValue: Double {
         guard completedOrders > 0 else { return 0 }
         return totalRevenue / Double(completedOrders)

@@ -25,6 +25,10 @@ struct SignUpView: View {
     @State private var isCodeValid = false
     @State private var codeValidationMessage = ""
     @State private var isCheckingCode = false
+    @State private var phoneValidationMessage = ""
+    @State private var isPhoneValid = false
+    @State private var isCheckingPhoneDuplicate = false
+    @State private var isCheckingEmailDuplicate = false
 
     var body: some View {
         NavigationStack {
@@ -41,15 +45,42 @@ struct SignUpView: View {
                                 validateEmail(newValue)
                             }
                         
-                        if !emailValidationMessage.isEmpty {
+                        if isCheckingEmailDuplicate {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Checking email...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else if !emailValidationMessage.isEmpty {
                             Text(emailValidationMessage)
                                 .font(.caption)
                                 .foregroundColor(isEmailValid ? .green : .red)
                         }
                     }
-                    TextField("Phone", text: $phone)
-                        .keyboardType(.phonePad)
-                        .textContentType(.telephoneNumber)
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField("Phone (Canadian)", text: $phone)
+                            .keyboardType(.phonePad)
+                            .textContentType(.telephoneNumber)
+                            .onChange(of: phone) { newValue in
+                                validatePhone(newValue)
+                            }
+                        
+                        if isCheckingPhoneDuplicate {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                Text("Checking phone number...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else if !phoneValidationMessage.isEmpty {
+                            Text(phoneValidationMessage)
+                                .font(.caption)
+                                .foregroundColor(isPhoneValid ? .green : .red)
+                        }
+                    }
                 }
 
                 Section("Password") {
@@ -123,7 +154,8 @@ struct SignUpView: View {
 
     private var canSubmit: Bool {
         !fullName.isEmpty &&
-        email.contains("@") &&
+        isEmailValid &&
+        isPhoneValid &&
         password.count >= 6 &&
         password == confirmPassword &&
         agree
@@ -188,8 +220,31 @@ struct SignUpView: View {
             return
         }
         
-        emailValidationMessage = "✓ Valid email address"
-        isEmailValid = true
+        // Check for duplicates
+        isCheckingEmailDuplicate = true
+        emailValidationMessage = ""
+        
+        Task {
+            do {
+                let isDuplicate = try await FirebaseService.shared.isEmailAlreadyInUse(email)
+                await MainActor.run {
+                    isCheckingEmailDuplicate = false
+                    if isDuplicate {
+                        emailValidationMessage = "This email is already registered"
+                        isEmailValid = false
+                    } else {
+                        emailValidationMessage = "✓ Valid email address"
+                        isEmailValid = true
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isCheckingEmailDuplicate = false
+                    emailValidationMessage = "Error checking email. Please try again."
+                    isEmailValid = false
+                }
+            }
+        }
     }
     
     // MARK: - Invite Code Validation
@@ -237,5 +292,123 @@ struct SignUpView: View {
                 }
             }
         }
+    }
+    
+    // MARK: - Phone Validation
+    
+    private func validatePhone(_ phone: String) {
+        if phone.isEmpty {
+            phoneValidationMessage = ""
+            isPhoneValid = false
+            return
+        }
+        
+        // Remove all non-digit characters for validation
+        let digitsOnly = phone.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+        
+        // Check if it starts with 1 (North American country code)
+        let phoneNumber: String
+        if digitsOnly.hasPrefix("1") && digitsOnly.count == 11 {
+            phoneNumber = String(digitsOnly.dropFirst()) // Remove the 1
+        } else if digitsOnly.count == 10 {
+            phoneNumber = digitsOnly
+        } else {
+            phoneValidationMessage = "Please enter a valid Canadian phone number"
+            isPhoneValid = false
+            return
+        }
+        
+        // Validate length (should be 10 digits after removing country code)
+        guard phoneNumber.count == 10 else {
+            phoneValidationMessage = "Phone number must be 10 digits"
+            isPhoneValid = false
+            return
+        }
+        
+        // Extract area code (first 3 digits)
+        let areaCode = String(phoneNumber.prefix(3))
+        
+        // Validate Canadian area codes
+        if !isValidCanadianAreaCode(areaCode) {
+            phoneValidationMessage = "Please enter a valid Canadian area code"
+            isPhoneValid = false
+            return
+        }
+        
+        // Validate NANP format (area code cannot start with 0 or 1)
+        if areaCode.hasPrefix("0") || areaCode.hasPrefix("1") {
+            phoneValidationMessage = "Invalid area code format"
+            isPhoneValid = false
+            return
+        }
+        
+        // Validate exchange code (digits 4-6, cannot start with 0 or 1)
+        let exchangeCode = String(phoneNumber.dropFirst(3).prefix(3))
+        if exchangeCode.hasPrefix("0") || exchangeCode.hasPrefix("1") {
+            phoneValidationMessage = "Invalid phone number format"
+            isPhoneValid = false
+            return
+        }
+        
+        // Check for duplicates
+        isCheckingPhoneDuplicate = true
+        phoneValidationMessage = ""
+        
+        Task {
+            do {
+                let isDuplicate = try await FirebaseService.shared.isPhoneAlreadyInUse(phoneNumber)
+                await MainActor.run {
+                    isCheckingPhoneDuplicate = false
+                    if isDuplicate {
+                        phoneValidationMessage = "This phone number is already registered"
+                        isPhoneValid = false
+                    } else {
+                        phoneValidationMessage = "✓ Valid Canadian phone number"
+                        isPhoneValid = true
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isCheckingPhoneDuplicate = false
+                    phoneValidationMessage = "Error checking phone number. Please try again."
+                    isPhoneValid = false
+                }
+            }
+        }
+    }
+    
+    private func isValidCanadianAreaCode(_ areaCode: String) -> Bool {
+        let canadianAreaCodes = [
+            // Greater Toronto Area
+            "416", "647", "905", "289", "365",
+            // Ontario
+            "613", "519", "705", "807", "249", "343", "437", "548", "683", "742", "753", "782", "825", "873",
+            // Alberta
+            "403", "587", "825", "780",
+            // British Columbia
+            "604", "778", "236", "672", "250",
+            // Manitoba
+            "204", "431",
+            // New Brunswick
+            "506",
+            // Newfoundland and Labrador
+            "709",
+            // Northwest Territories
+            "867",
+            // Nova Scotia
+            "902", "782",
+            // Nunavut
+            "867",
+            // Prince Edward Island
+            "902", "782",
+            // Quebec
+            "418", "438", "450", "514", "579", "581", "819", "873",
+            // Saskatchewan
+            "306", "639",
+            // Yukon
+            "867"
+        ]
+        
+        return canadianAreaCodes.contains(areaCode)
     }
 }
