@@ -151,7 +151,7 @@ struct DriverPageView: View {
                     .padding()
                 } else {
                     List(orderStore.assignedOrders) { order in
-                        AssignedOrderCard(order: order) { action in
+                        AssignedOrderCard(order: order, orderStore: orderStore) { action in
                             handleOrderAction(order, action: action)
                         }
                     }
@@ -317,6 +317,7 @@ struct AvailableOrderCard: View {
 
 struct AssignedOrderCard: View {
     let order: Order
+    let orderStore: FirebaseOrderStore
     let onAction: (OrderAction) -> Void
     
     var body: some View {
@@ -333,9 +334,29 @@ struct AssignedOrderCard: View {
                     .cornerRadius(6)
             }
             
-            Text("Customer: \(order.userId)")
+            Text("Customer: \(orderStore.getCustomerName(for: order.userId))")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+            
+            // Payment Information
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Status: \(order.paymentStatus?.displayName ?? "Not specified")")
+                            .font(.caption)
+                            .foregroundColor(order.paymentStatus?.color ?? .gray)
+                            .fontWeight(.medium)
+                    }
+                    
+                    Spacer()
+                    
+                    Text("$\(String(format: "%.2f", order.cost))")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.green)
+                }
+                
+            }
             
             if let instructions = order.instructions, !instructions.isEmpty {
                 Text("Instructions: \(instructions)")
@@ -343,30 +364,59 @@ struct AssignedOrderCard: View {
                     .foregroundColor(.secondary)
             }
             
-            // Action buttons based on status
-            HStack {
-                switch order.status {
-                case .assigned:
-                    Button("Mark as Picked Up") {
-                        onAction(.pickedUp)
+            // Action buttons based on status and payment
+            VStack(spacing: 8) {
+                // Payment collection button - shown when payment is pending
+                if order.paymentStatus == .pending {
+                    if order.status == .assigned && order.paymentResponsibility == .sender {
+                        Button("💰 Collect Payment from Sender") {
+                            onAction(.collectPayment)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .foregroundColor(.white)
+                        .background(Color.orange)
+                        .cornerRadius(8)
+                        .font(.headline)
+                    } else if order.status == .pickedUp && order.paymentResponsibility == .receiver {
+                        Button("💰 Collect Payment from Receiver") {
+                            onAction(.collectPayment)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .foregroundColor(.white)
+                        .background(Color.orange)
+                        .cornerRadius(8)
+                        .font(.headline)
                     }
-                    .buttonStyle(.borderedProminent)
-                case .pickedUp:
-                    Button("Mark as Delivered") {
-                        onAction(.delivered)
-                    }
-                    .buttonStyle(.borderedProminent)
-                default:
-                    EmptyView()
                 }
                 
-                Spacer()
-                
-                Button("Cancel") {
-                    onAction(.cancel)
+                HStack {
+                    switch order.status {
+                    case .assigned:
+                        // Only enable "Mark as Picked Up" if payment is collected (for sender) or not required (for receiver)
+                        Button("Mark as Picked Up") {
+                            onAction(.pickedUp)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(order.paymentResponsibility == .sender && order.paymentStatus == .pending)
+                    case .pickedUp:
+                        // Only enable "Mark as Delivered" if payment is collected (for receiver) or not required (for sender)
+                        Button("Mark as Delivered") {
+                            onAction(.delivered)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(order.paymentResponsibility == .receiver && order.paymentStatus == .pending)
+                    default:
+                        EmptyView()
+                    }
+                    
+                    Spacer()
+                    
+                    Button("Cancel") {
+                        onAction(.cancel)
+                    }
+                    .buttonStyle(.bordered)
+                    .foregroundColor(.red)
                 }
-                .buttonStyle(.bordered)
-                .foregroundColor(.red)
             }
         }
         .padding()
@@ -433,4 +483,5 @@ enum OrderAction {
     case pickedUp
     case delivered
     case cancel
+    case collectPayment
 }

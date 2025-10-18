@@ -899,14 +899,25 @@ struct AdminOrderCard: View {
             .font(.caption)
             .foregroundColor(.secondary)
             
+            // Payment Information
             HStack {
-                Text("$\(String(format: "%.2f", order.cost))")
-                    .fontWeight(.semibold)
-                    .foregroundColor(.green)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Payment: \(order.paymentResponsibility?.displayName ?? "Not specified")")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                    Text("Status: \(order.paymentStatus?.displayName ?? "Not specified")")
+                        .font(.caption2)
+                        .foregroundColor(order.paymentStatus?.color ?? .gray)
+                }
                 Spacer()
-                Text("Created: \(order.createdAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("$\(String(format: "%.2f", order.cost))")
+                        .fontWeight(.semibold)
+                        .foregroundColor(.green)
+                    Text("Created: \(order.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
             }
             
             // Admin Actions

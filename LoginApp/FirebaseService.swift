@@ -33,14 +33,21 @@ final class FirebaseService: ObservableObject {
     /// - Returns: AppUser object with user information
     /// - Throws: FirebaseAuthError if authentication fails
     func signInWithPhone(phone: String, password: String) async throws -> AppUser {
-        // First, find the user by phone number
+        // For now, we'll use a simpler approach: try to find the user by phone
+        // and then authenticate with their email
         let normalizedPhone = phone.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
         
-        let snapshot = try await db.collection("users")
-            .whereField("phone", isEqualTo: normalizedPhone)
-            .getDocuments()
+        // Get all users and find the one with matching phone
+        let snapshot = try await db.collection("users").getDocuments()
         
-        guard let userDoc = snapshot.documents.first else {
+        guard let userDoc = snapshot.documents.first(where: { document in
+            do {
+                let user = try document.data(as: AppUser.self)
+                return user.phone == normalizedPhone
+            } catch {
+                return false
+            }
+        }) else {
             throw NSError(domain: "FirebaseAuthError", code: 17011, userInfo: [NSLocalizedDescriptionKey: "No account found with this phone number."])
         }
         
@@ -113,7 +120,9 @@ final class FirebaseService: ObservableObject {
     
     func saveOrder(_ order: Order, userId: String) async throws {
         let documentId = order.id ?? UUID().uuidString
-        try db.collection("orders").document(documentId).setData(from: order)
+        var orderToSave = order
+        orderToSave.id = documentId
+        try db.collection("orders").document(documentId).setData(from: orderToSave)
     }
     
     func fetchOrders(userId: String) async throws -> [Order] {
@@ -164,7 +173,34 @@ final class FirebaseService: ObservableObject {
     }
     
     func updateOrderStatus(_ order: Order) async throws {
-        try await db.collection("orders").document(order.id ?? "").setData(from: order)
+        guard let orderId = order.id, !orderId.isEmpty else {
+            throw NSError(domain: "FirebaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Order ID is missing or empty"])
+        }
+        try await db.collection("orders").document(orderId).setData(from: order)
+    }
+    
+    // MARK: - Payment Management
+    
+    /// Updates the payment status of an order
+    func updatePaymentStatus(_ orderId: String, status: PaymentStatus) async throws {
+        try await db.collection("orders").document(orderId).updateData([
+            "paymentStatus": status.rawValue
+        ])
+    }
+    
+    /// Processes a payment for an order (placeholder for future payment integration)
+    func processPayment(_ orderId: String, amount: Double, paymentMethod: PaymentMethod) async throws -> Bool {
+        // TODO: Integrate with actual payment processor (Stripe, Square, etc.)
+        // For now, just update the payment status to paid
+        try await updatePaymentStatus(orderId, status: .paid)
+        return true
+    }
+    
+    /// Gets payment methods available for a user
+    func getPaymentMethods(for userId: String) async throws -> [PaymentMethod] {
+        // TODO: Implement actual payment method retrieval
+        // For now, return default methods
+        return [.cash, .cardTap]
     }
     
     // MARK: - Driver Codes Management

@@ -20,6 +20,12 @@ final class FirebaseOrderStore: ObservableObject {
     @Published var driverNames: [String: String] = [:] // Maps driverId to driver name
     @Published var customerNames: [String: String] = [:] // Maps userId to customer name
     
+    /// Available payment methods
+    @Published var paymentMethods: [PaymentMethod] = []
+    
+    /// Payment processing status
+    @Published var isProcessingPayment = false
+    
     private let firebaseService = FirebaseService.shared
     
     // Computed properties for statistics
@@ -66,9 +72,7 @@ final class FirebaseOrderStore: ObservableObject {
             do {
                 var newOrder = order
                 newOrder.userId = userId
-                print("DEBUG: Saving order with userId: \(userId)")
                 try await firebaseService.saveOrder(newOrder, userId: userId)
-                print("DEBUG: Order saved successfully, refreshing list")
                 // Refresh the list after successful save
                 await MainActor.run {
                     loadOrders()
@@ -153,6 +157,11 @@ final class FirebaseOrderStore: ObservableObject {
     }
     
     func acceptOrder(_ order: Order, driverId: String) {
+        guard let orderId = order.id, !orderId.isEmpty else {
+            errorMessage = "Cannot accept order - missing order ID"
+            return
+        }
+        
         Task {
             do {
                 var updatedOrder = order
@@ -171,6 +180,11 @@ final class FirebaseOrderStore: ObservableObject {
     }
     
     func updateOrderStatus(_ order: Order, action: OrderAction) {
+        guard let orderId = order.id, !orderId.isEmpty else {
+            errorMessage = "Cannot update order - missing order ID"
+            return
+        }
+        
         Task {
             do {
                 var updatedOrder = order
@@ -184,6 +198,8 @@ final class FirebaseOrderStore: ObservableObject {
                     updatedOrder.deliveredAt = Date()
                 case .cancel:
                     updatedOrder.status = .cancelled
+                case .collectPayment:
+                    updatedOrder.paymentStatus = .paid
                 }
                 
                 try await firebaseService.updateOrderStatus(updatedOrder)
@@ -197,6 +213,11 @@ final class FirebaseOrderStore: ObservableObject {
     }
     
     func updateOrderStatusWithPhoto(_ order: Order, photoURL: String?, notes: String?) {
+        guard let orderId = order.id, !orderId.isEmpty else {
+            errorMessage = "Cannot update order - missing order ID"
+            return
+        }
+        
         Task {
             do {
                 var updatedOrder = order
@@ -280,6 +301,72 @@ final class FirebaseOrderStore: ObservableObject {
             } catch {
                 await MainActor.run {
                     errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+    
+    // MARK: - Payment Management
+    
+    /// Loads available payment methods for the current user
+    func loadPaymentMethods(for userId: String) {
+        Task {
+            do {
+                let methods = try await firebaseService.getPaymentMethods(for: userId)
+                await MainActor.run {
+                    self.paymentMethods = methods
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = "Failed to load payment methods: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+    
+    /// Processes a payment for an order
+    func processPayment(for order: Order, paymentMethod: PaymentMethod) {
+        guard let orderId = order.id else { return }
+        
+        isProcessingPayment = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                let success = try await firebaseService.processPayment(orderId, amount: order.cost, paymentMethod: paymentMethod)
+                
+                await MainActor.run {
+                    self.isProcessingPayment = false
+                    if success {
+                        // Reload orders to reflect payment status change
+                        self.loadAllOrders()
+                    } else {
+                        self.errorMessage = "Payment processing failed"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isProcessingPayment = false
+                    self.errorMessage = "Payment error: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+    
+    /// Updates payment status for an order
+    func updatePaymentStatus(for order: Order, status: PaymentStatus) {
+        guard let orderId = order.id else { return }
+        
+        Task {
+            do {
+                try await firebaseService.updatePaymentStatus(orderId, status: status)
+                await MainActor.run {
+                    // Reload orders to reflect payment status change
+                    self.loadAllOrders()
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = "Failed to update payment status: \(error.localizedDescription)"
                 }
             }
         }
