@@ -60,6 +60,9 @@ struct UserPageView: View {
     
     // MARK: - User Properties
     
+    /// Auth store for sign-out and phone linking
+    var auth: FirebaseAuthStore
+    
     /// User's unique token for identification
     var token: String
     
@@ -233,6 +236,7 @@ struct UserPageView: View {
 
     private var profileTab: some View {
         ProfileView(
+            auth: auth,
             token: token,
             initialName: initialName,
             initialEmail: initialEmail,

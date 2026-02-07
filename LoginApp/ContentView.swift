@@ -23,12 +23,22 @@ struct ContentView: View {
     @State private var validationMessage = ""
     @State private var isValid = false
     @State private var inputType: InputType = .unknown
+    @State private var showForgotPassword = false
 
     var body: some View {
-        if let u = auth.currentUser {
-                    RoleBasedView(auth: auth)
+        if let pending = auth.pendingSignUpVerification {
+            // Show email + phone OTP verification right after sign-up (before main app).
+            SignUpVerificationFlowView(
+                auth: auth,
+                email: pending.email,
+                phone: pending.phone,
+                onComplete: {
+                    auth.clearPendingSignUpVerification()
                 }
-        else {
+            )
+        } else if auth.currentUser != nil {
+            RoleBasedView(auth: auth)
+        } else {
             VStack(spacing: 20) {
                 Text("Courier Sign In")
                     .font(.largeTitle)
@@ -70,6 +80,11 @@ struct ContentView: View {
                 .cornerRadius(8)
                 .disabled(auth.isLoading || !isValid)
 
+                Button("Forgot password?") {
+                    showForgotPassword = true
+                }
+                .padding(.top, 4)
+
                 Button("Create Account") {
                     showSignUp = true
                 }
@@ -84,6 +99,9 @@ struct ContentView: View {
             .padding()
             .sheet(isPresented: $showSignUp) {
                 SignUpView(auth: auth)
+            }
+            .sheet(isPresented: $showForgotPassword) {
+                ForgotPasswordView(auth: auth)
             }
         }
     }

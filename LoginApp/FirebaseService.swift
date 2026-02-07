@@ -59,30 +59,137 @@ final class FirebaseService: ObservableObject {
     }
     
     func signUp(email: String, password: String, fullName: String, phone: String, role: UserRole = .user) async throws -> AppUser {
-        // Check for duplicate email before attempting Firebase Auth
-        if try await isEmailAlreadyInUse(email) {
-            throw NSError(domain: "FirebaseAuthError", code: 17007, userInfo: [NSLocalizedDescriptionKey: "An account with this email already exists."])
-        }
+        let normalizedPhone = normalizePhoneForStorage(phone)
         
-        // Check for duplicate phone number
-        if try await isPhoneAlreadyInUse(phone) {
-            throw NSError(domain: "FirebaseAuthError", code: 17008, userInfo: [NSLocalizedDescriptionKey: "An account with this phone number already exists."])
+        // Email duplicate: rely on Firebase Auth createUser (throws 17007 if email already in use)
+        // Phone duplicate: check Firestore only if we have permission; otherwise catch at save
+        let result: AuthDataResult
+        do {
+            result = try await Auth.auth().createUser(withEmail: email, password: password)
+        } catch let err as NSError {
+            if err.domain == "FIRAuthErrorDomain" && err.code == 17007 {
+                throw NSError(domain: "FirebaseAuthError", code: 17007, userInfo: [NSLocalizedDescriptionKey: "An account with this email already exists."])
+            }
+            throw err
         }
-        
-        let result = try await Auth.auth().createUser(withEmail: email, password: password)
         
         let user = AppUser(
             id: result.user.uid,
             fullName: fullName,
             email: email,
-            phone: phone,
+            phone: normalizedPhone,
             passwordHash: "", // Not needed with Firebase Auth
             token: result.user.uid,
             role: role
         )
         
         try await saveUser(user)
+        try await result.user.sendEmailVerification()
         return user
+    }
+    
+    /// Normalize phone to E.164 for Firebase (e.g. +1XXXXXXXXXX for Canada)
+    func normalizePhoneForFirebase(_ phone: String) -> String {
+        let digits = phone.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+        if digits.hasPrefix("1") && digits.count == 11 {
+            return "+" + digits
+        }
+        if digits.count == 10 {
+            return "+1" + digits
+        }
+        return "+" + digits
+    }
+    
+    /// Normalize phone for storage (digits only, 10 digits for Canada)
+    func normalizePhoneForStorage(_ phone: String) -> String {
+        let digits = phone.replacingOccurrences(of: "[^0-9]", with: "", options: .regularExpression)
+        if digits.hasPrefix("1") && digits.count == 11 {
+            return String(digits.dropFirst())
+        }
+        return digits.count == 10 ? digits : digits
+    }
+    
+    // MARK: - Email verification (OTP / link)
+    
+    /// Sends email verification to the current user. Call after signup or when resending.
+    func sendEmailVerification() async throws {
+        guard let user = Auth.auth().currentUser else {
+            throw NSError(domain: "FirebaseAuthError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No signed-in user."])
+        }
+        try await user.sendEmailVerification()
+    }
+    
+    /// Returns whether the current user's email is verified (e.g. after they tapped the link).
+    func isEmailVerified() -> Bool {
+        Auth.auth().currentUser?.isEmailVerified ?? false
+    }
+    
+    /// Reloads the current user from the server (e.g. to refresh isEmailVerified after they tap the link).
+    func reloadCurrentUser() async throws {
+        guard let user = Auth.auth().currentUser else { return }
+        try await user.reload()
+    }
+    
+    // MARK: - Phone OTP (signup verification and sign-in)
+    
+    /// Sends SMS OTP to the given phone number. Returns a verification ID to pass to verifyPhoneOTP.
+    /// Phone must be E.164 (e.g. +14165551234). Use normalizePhoneForFirebase().
+    func sendPhoneOTP(phoneNumberE164: String) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            PhoneAuthProvider.provider().verifyPhoneNumber(phoneNumberE164, uiDelegate: nil) { verificationID, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let vid = verificationID else {
+                    continuation.resume(throwing: NSError(domain: "FirebaseAuthError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No verification ID returned."]))
+                    return
+                }
+                continuation.resume(returning: vid)
+            }
+        }
+    }
+    
+    /// Verifies the SMS code and returns a credential. Use to link to current user (signup) or sign in (password reset).
+    func verifyPhoneOTP(verificationID: String, verificationCode: String) async throws -> AuthCredential {
+        let credential = PhoneAuthProvider.provider().credential(withVerificationID: verificationID, verificationCode: verificationCode)
+        return credential
+    }
+    
+    /// Links the verified phone credential to the current user (call after signup so they can use phone for sign-in / reset).
+    func linkPhoneCredential(_ credential: AuthCredential) async throws {
+        guard let user = Auth.auth().currentUser else {
+            throw NSError(domain: "FirebaseAuthError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No signed-in user."])
+        }
+        try await user.link(with: credential)
+    }
+    
+    /// Sign in with phone OTP: after verifying code, sign in with the credential. Returns Firestore AppUser if account exists.
+    /// (Phone password reset only works for users who linked their phone at signup.)
+    func signInWithPhoneCredential(_ credential: AuthCredential) async throws -> AppUser {
+        let result = try await Auth.auth().signIn(with: credential)
+        do {
+            return try await fetchUser(uid: result.user.uid)
+        } catch {
+            try Auth.auth().signOut()
+            throw NSError(domain: "FirebaseAuthError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No account found for this phone number. Use email sign-up first, then link your phone."])
+        }
+    }
+    
+    // MARK: - Password reset
+    
+    /// Sends password reset email to the given address (Firebase default: link in email).
+    func sendPasswordResetEmail(email: String) async throws {
+        try await Auth.auth().sendPasswordReset(withEmail: email)
+    }
+    
+    /// Password reset by phone: send OTP, user enters code, then they sign in with phone credential and we let them set a new password.
+    /// Call sendPhoneOTP first, then verifyPhoneOTP, then signInWithPhoneCredential. After that, call updatePassword.
+    func updatePassword(newPassword: String) async throws {
+        guard let user = Auth.auth().currentUser else {
+            throw NSError(domain: "FirebaseAuthError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No signed-in user."])
+        }
+        try await user.updatePassword(to: newPassword)
     }
     
     func signOut() throws {
@@ -114,6 +221,11 @@ final class FirebaseService: ObservableObject {
     
     func updateUser(_ user: AppUser) async throws {
         try await saveUser(user)
+    }
+    
+    /// Updates the phone number on the user document (e.g. after linking phone to Auth).
+    func updateUserPhone(uid: String, phoneNormalized: String) async throws {
+        try await db.collection("users").document(uid).updateData(["phone": phoneNormalized])
     }
     
     // MARK: - Order Management

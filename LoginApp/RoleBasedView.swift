@@ -17,6 +17,7 @@ struct RoleBasedView: View {
                 switch user.role {
                 case .user:
                     UserPageView(
+                        auth: auth,
                         token: user.token,
                         initialName: user.fullName,
                         initialEmail: user.email,

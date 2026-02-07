@@ -1,8 +1,10 @@
 import SwiftUI
 
 struct ProfileView: View {
+    @ObservedObject var auth: FirebaseAuthStore
     @StateObject private var store = FirebaseProfileStore()
     @State private var showSaveSuccess = false
+    @State private var showLinkPhoneSheet = false
     
     let token: String
     let initialName: String?
@@ -11,12 +13,14 @@ struct ProfileView: View {
     let onSignOut: () -> Void
     
     init(
+        auth: FirebaseAuthStore,
         token: String,
         initialName: String? = nil,
         initialEmail: String? = nil,
         initialPhone: String? = nil,
         onSignOut: @escaping () -> Void
     ) {
+        self.auth = auth
         self.token = token
         self.initialName = initialName
         self.initialEmail = initialEmail
@@ -78,6 +82,39 @@ struct ProfileView: View {
                             .onSubmit {
                                 store.saveProfile()
                             }
+                    }
+                    
+                    // Phone verification (link for login & password reset)
+                    Section {
+                        if auth.isPhoneLinked {
+                            HStack {
+                                Text("Phone linked")
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                if let masked = auth.linkedPhoneMasked {
+                                    Text(masked)
+                                        .font(.subheadline)
+                                        .foregroundColor(.green)
+                                }
+                            }
+                            Text("You can sign in and reset password with this number.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("Linking your phone lets you sign in with your phone number and use it for password reset.")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            Button("Verify & link phone") {
+                                showLinkPhoneSheet = true
+                            }
+                            .disabled(store.profile.phone.isEmpty || store.profile.phone.filter { $0.isNumber }.count < 10)
+                        }
+                    } header: {
+                        Text("Phone verification")
+                    } footer: {
+                        if !auth.isPhoneLinked && !store.profile.phone.isEmpty && store.profile.phone.filter({ $0.isNumber }).count < 10 {
+                            Text("Enter a valid Canadian phone number above, then tap Verify & link phone.")
+                        }
                     }
                     
                     // Addresses
@@ -166,6 +203,13 @@ struct ProfileView: View {
             if newValue.phone.isEmpty, let p = initialPhone {
                 store.profile.phone = p
             }
+        }
+        .sheet(isPresented: $showLinkPhoneSheet) {
+            LinkPhoneSheetView(
+                auth: auth,
+                phone: store.profile.phone,
+                onSuccess: { store.loadProfile() }
+            )
         }
     }
     

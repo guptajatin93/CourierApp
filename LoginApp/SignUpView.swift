@@ -27,8 +27,6 @@ struct SignUpView: View {
     @State private var isCheckingCode = false
     @State private var phoneValidationMessage = ""
     @State private var isPhoneValid = false
-    @State private var isCheckingPhoneDuplicate = false
-    @State private var isCheckingEmailDuplicate = false
 
     var body: some View {
         NavigationStack {
@@ -45,15 +43,7 @@ struct SignUpView: View {
                                 validateEmail(newValue)
                             }
                         
-                        if isCheckingEmailDuplicate {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Checking email...")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        } else if !emailValidationMessage.isEmpty {
+                        if !emailValidationMessage.isEmpty {
                             Text(emailValidationMessage)
                                 .font(.caption)
                                 .foregroundColor(isEmailValid ? .green : .red)
@@ -67,15 +57,7 @@ struct SignUpView: View {
                                 validatePhone(newValue)
                             }
                         
-                        if isCheckingPhoneDuplicate {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Checking phone number...")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        } else if !phoneValidationMessage.isEmpty {
+                        if !phoneValidationMessage.isEmpty {
                             Text(phoneValidationMessage)
                                 .font(.caption)
                                 .foregroundColor(isPhoneValid ? .green : .red)
@@ -171,6 +153,7 @@ struct SignUpView: View {
         
         await auth.signUp(email: email, password: password, fullName: fullName, phone: phone, role: selectedRole, inviteCode: selectedRole == .driver ? inviteCode : nil)
         if auth.currentUser != nil {
+            auth.setPendingSignUpVerification(email: email, phone: phone)
             dismiss()
         }
     }
@@ -220,31 +203,9 @@ struct SignUpView: View {
             return
         }
         
-        // Check for duplicates
-        isCheckingEmailDuplicate = true
-        emailValidationMessage = ""
-        
-        Task {
-            do {
-                let isDuplicate = try await FirebaseService.shared.isEmailAlreadyInUse(email)
-                await MainActor.run {
-                    isCheckingEmailDuplicate = false
-                    if isDuplicate {
-                        emailValidationMessage = "This email is already registered"
-                        isEmailValid = false
-                    } else {
-                        emailValidationMessage = "✓ Valid email address"
-                        isEmailValid = true
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    isCheckingEmailDuplicate = false
-                    emailValidationMessage = "Error checking email. Please try again."
-                    isEmailValid = false
-                }
-            }
-        }
+        // Format only; duplicate check happens at sign-up (Firebase Auth returns "email already in use")
+        emailValidationMessage = "✓ Valid email address"
+        isEmailValid = true
     }
     
     // MARK: - Invite Code Validation
@@ -350,31 +311,9 @@ struct SignUpView: View {
             return
         }
         
-        // Check for duplicates
-        isCheckingPhoneDuplicate = true
-        phoneValidationMessage = ""
-        
-        Task {
-            do {
-                let isDuplicate = try await FirebaseService.shared.isPhoneAlreadyInUse(phoneNumber)
-                await MainActor.run {
-                    isCheckingPhoneDuplicate = false
-                    if isDuplicate {
-                        phoneValidationMessage = "This phone number is already registered"
-                        isPhoneValid = false
-                    } else {
-                        phoneValidationMessage = "✓ Valid Canadian phone number"
-                        isPhoneValid = true
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    isCheckingPhoneDuplicate = false
-                    phoneValidationMessage = "Error checking phone number. Please try again."
-                    isPhoneValid = false
-                }
-            }
-        }
+        // Format only; duplicate phone is not checked here (would require Firestore read before sign-in)
+        phoneValidationMessage = "✓ Valid Canadian phone number"
+        isPhoneValid = true
     }
     
     private func isValidCanadianAreaCode(_ areaCode: String) -> Bool {
